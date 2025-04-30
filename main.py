@@ -3,10 +3,19 @@ from tkinter import *           # Librería base para la interfaz gráfica
 from tkinter import messagebox, ttk  # Messagebox para advertencias y ttk para barra de progreso
 from PIL import Image, ImageTk   # Librerías para manejo de imágenes
 import customtkinter             # Librería para botones personalizados (más bonitos)
+import serial
+import time
+
 
 # --------------------------------------------------------------------
 # Definición de datos iniciales para los pasos de ensamblaje
 # --------------------------------------------------------------------
+
+import threading
+
+puerto_serie = None  # Se inicializará al conectar
+paso_actual_serial = 0
+
 
 # Lista de textos que describen cada paso del proceso
 titulos_pasos = [
@@ -47,15 +56,39 @@ def actualizar_estado():
 
 # Función para establecer conexión
 def conectar():
-    global estado_conexion
-    estado_conexion = True
-    actualizar_estado()
+    global estado_conexion, puerto_serie
+    try:
+        puerto_serie = serial.Serial('COM3', 115200, timeout=1)  # Cambia COM3 por el tuyo
+        time.sleep(1) 
+        estado_conexion = True
+        actualizar_estado()
+    except:
+        messagebox.showerror("Error", "No se pudo abrir el puerto serial.")
+
 
 # Función para desconectar
 def desconectar():
     global estado_conexion
     estado_conexion = False
     actualizar_estado()
+
+def leer_serial_continuamente(cambiar_paso_func):
+    def loop():
+        global paso_actual_serial
+        while estado_conexion:
+            if puerto_serie and puerto_serie.in_waiting:
+                try:
+                    dato = puerto_serie.readline().decode().strip()
+                    if dato.isdigit():
+                        if int(dato) == paso_actual_serial:
+                            cambiar_paso_func(1)
+                        else:
+                            messagebox.showwarning("¡Error!", f"Pieza incorrecta: esperada {paso_actual_serial+1}, recibida {int(dato)+1}")
+                except:
+                    pass
+            time.sleep(0.2)
+    threading.Thread(target=loop, daemon=True).start()
+
 
 # Función principal que abre la ventana del proceso de ensamblaje
 def abrir_ventana_ensamblaje():
@@ -168,10 +201,13 @@ def abrir_ventana_ensamblaje():
 
     # Cambia el paso actual (hacia adelante o hacia atrás)
     def cambiar_paso(direccion):
+        global paso_actual_serial
         nuevo_paso = paso_actual.get() + direccion
         if 0 <= nuevo_paso < len(titulos_pasos):
             paso_actual.set(nuevo_paso)
+            paso_actual_serial = nuevo_paso
             actualizar_pantalla()
+
 
     # Muestra un pequeño modal indicando que el ensamblaje fue finalizado
     def finalizar_ensamblaje(ventana):
@@ -251,6 +287,9 @@ def abrir_ventana_ensamblaje():
 
     # Inicializa la pantalla
     actualizar_pantalla()
+
+    leer_serial_continuamente(cambiar_paso)
+
 
 # --------------------------------------------------------------------
 # Definición de la Ventana Principal
