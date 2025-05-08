@@ -5,6 +5,8 @@ from PIL import Image, ImageTk   # Librerías para manejo de imágenes
 import customtkinter             # Librería para botones personalizados (más bonitos)
 import serial
 import time
+import mysql.connector
+
 
 
 # --------------------------------------------------------------------
@@ -16,28 +18,26 @@ import threading
 puerto_serie = None  # Se inicializará al conectar
 paso_actual_serial = 0
 
+def cargar_pasos_desde_mysql():
+    conexion = mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="",  # Cambia si tienes contraseña
+        database="ensamblaje_db"
+    )
+    cursor = conexion.cursor()
+    cursor.execute("SELECT texto, imagenes FROM pasos ORDER BY id ASC")
+    datos = cursor.fetchall()
+    conexion.close()
 
-# Lista de textos que describen cada paso del proceso
-titulos_pasos = [
-    "Agarre la pieza 1000 (tuerca).",
-    "Agarre la pieza 1001 (niple).",
-    "Ensamble la pieza 1000 con la pieza 1001.",
-    "Agarre la pieza 1002 (cuerpo en forma de T).",
-    "Ensamble el conjunto con la pieza 1002.",
-    "Agarre la pieza 1003 (perilla giratoria).",
-    "Ensamble todo el conjunto final."
-]
+    titulos = []
+    imagenes = []
+    for texto, imgs in datos:
+        titulos.append(texto)
+        imagenes.append(imgs.split(","))
+    return titulos, imagenes
 
-# Lista de imágenes correspondientes a cada paso
-imagenes_pasos = [
-    ["pieza_1000.png"],
-    ["pieza_1001.png"],
-    ["pieza_1000.png", "pieza_1001.png"],
-    ["pieza_1002.png"],
-    ["ensamblaje_1000_1001.png", "pieza_1002.png"],
-    ["pieza_1003.png"],
-    ["ensamblaje_1000_1001_1002.png", "pieza_1003.png"]
-]
+titulos_pasos, imagenes_pasos = cargar_pasos_desde_mysql()
 
 # Variables globales de control
 estado_conexion = False              # Indica si el sistema está conectado
@@ -58,7 +58,7 @@ def actualizar_estado():
 def conectar():
     global estado_conexion, puerto_serie
     try:
-        puerto_serie = serial.Serial('COM3', 115200, timeout=1)  # Cambia COM3 por el tuyo
+        puerto_serie = serial.Serial('COM8', 115200, timeout=1)  # Cambia COM3 por el tuyo
         time.sleep(1) 
         estado_conexion = True
         actualizar_estado()
@@ -71,6 +71,7 @@ def desconectar():
     global estado_conexion
     estado_conexion = False
     actualizar_estado()
+
 
 def leer_serial_continuamente(cambiar_paso_func):
     def loop():
@@ -88,7 +89,6 @@ def leer_serial_continuamente(cambiar_paso_func):
                     pass
             time.sleep(0.2)
     threading.Thread(target=loop, daemon=True).start()
-
 
 # Función principal que abre la ventana del proceso de ensamblaje
 def abrir_ventana_ensamblaje():
@@ -287,6 +287,9 @@ def abrir_ventana_ensamblaje():
 
     # Inicializa la pantalla
     actualizar_pantalla()
+
+    global paso_actual_serial
+    paso_actual_serial = 0
 
     leer_serial_continuamente(cambiar_paso)
 
