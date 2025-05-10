@@ -15,7 +15,7 @@ def cargar_pasos_desde_mysql():
     conexion = mysql.connector.connect(
         host="localhost",
         user="root",
-        password="",  # Cambia si tienes contraseña
+        password="",  
         database="ensamblaje_db"
     )
     cursor = conexion.cursor()
@@ -38,10 +38,6 @@ boton_por_paso = [0, 1, 4, 2, 4, 3, 4]
 estado_conexion = False              # Indica si el sistema está conectado
 ventana_ensamblaje_abierta = False    # Evita abrir más de una ventana de ensamblaje al mismo tiempo
 
-# --------------------------------------------------------------------
-# Funciones principales del sistema
-# --------------------------------------------------------------------
-
 # Actualiza el estado de conexión en la pantalla principal
 def actualizar_estado():
     if estado_conexion:
@@ -54,7 +50,7 @@ def conectar():
     global estado_conexion, puerto_serie
     try:
         print("[INFO] Intentando conectar al ESP32...")
-        puerto_serie = serial.Serial('COM8', 115200, timeout=1)  # Ajusta COM si es necesario
+        puerto_serie = serial.Serial('COM8', 115200, timeout=1)  
         time.sleep(1) 
         estado_conexion = True
         actualizar_estado()
@@ -91,7 +87,7 @@ def leer_serial_continuamente(cambiar_paso_func, finalizar_func, ventana_ref):
                                 if puerto_serie:
                                     puerto_serie.write(b"OFF\n")
                                     print("[SERIAL] Instrucción enviada: apagar todos los LEDs")
-                                finalizar_func(ventana_ref)  # 👈 Cierra la ventana como si fuera botón Finalizar
+                                finalizar_func(ventana_ref) 
                             else:
                                 cambiar_paso_func(1)
 
@@ -205,7 +201,6 @@ def abrir_ventana_ensamblaje():
     boton_finalizar.grid(row=0, column=2, padx=20)
     boton_finalizar.grid_remove()  # Ocultar inicialmente
 
-    # --- Subfunciones internas de la ventana de ensamblaje ---
 
     # Cierra la ventana de ensamblaje
     def cerrar_ventana(ventana):
@@ -213,7 +208,7 @@ def abrir_ventana_ensamblaje():
         ventana.destroy()
         ventana_ensamblaje_abierta = False
 
-    # Cambia el paso actual (hacia adelante o hacia atrás)
+    # Cambia el paso actual
     def cambiar_paso(direccion):
         global paso_actual_serial
         nuevo_paso = paso_actual.get() + direccion
@@ -256,7 +251,7 @@ def abrir_ventana_ensamblaje():
         # Después de 2 segundos, cierra todo
         ventana.after(2000, lambda: [modal.destroy(), cerrar_ventana(ventana)])
 
-    # Actualiza la información visual de la ventana (paso, imágenes, progreso)
+    # Actualiza la información visual de la ventana
     def actualizar_pantalla():
         actual = paso_actual.get()
         paso_label.config(text=f"Paso {actual+1}:")
@@ -267,26 +262,26 @@ def abrir_ventana_ensamblaje():
             widget.destroy()
 
         # Mostrar imagen o imágenes correspondientes al paso actual
-        image_path = "labomba.jpg"  # Imagen genérica para prueba
+        #image_path = "labomba.jpg"  
         imagenes = imagenes_pasos[actual]
         if len(imagenes) == 1:
             frame_sombra = Frame(frame_imagenes, bg="#e0e0e0", padx=3, pady=3)
             frame_sombra.pack()
-            img1 = Image.open(image_path)
+            img1 = Image.open(imagenes[0])
             img1 = img1.resize((350, 250), Image.Resampling.LANCZOS)
             img1 = ImageTk.PhotoImage(img1)
             label_imagen1 = Label(frame_sombra, image=img1, bg="white")
             label_imagen1.image = img1
             label_imagen1.pack()
         else:
-            img1 = Image.open(image_path)
+            img1 = Image.open(imagenes[0])
             img1 = img1.resize((300, 220), Image.Resampling.LANCZOS)
             img1 = ImageTk.PhotoImage(img1)
             label_imagen1 = Label(frame_imagenes, image=img1, bg="white")
             label_imagen1.image = img1
             label_imagen1.grid(row=0, column=0, padx=10)
 
-            img2 = Image.open(image_path)
+            img2 = Image.open(imagenes[1])
             img2 = img2.resize((300, 220), Image.Resampling.LANCZOS)
             img2 = ImageTk.PhotoImage(img2)
             label_imagen2 = Label(frame_imagenes, image=img2, bg="white")
@@ -325,20 +320,17 @@ def abrir_ventana_ensamblaje():
     leer_serial_continuamente(cambiar_paso, finalizar_ensamblaje, nueva_ventana)
 
 
-
-# --------------------------------------------------------------------
 # Definición de la Ventana Principal
-# --------------------------------------------------------------------
 
 window = Tk()
 window.title("Ensamblaje Coflex")
 window.geometry("850x450")
 window.configure(bg="#ffffff")
 
-# Imagen principal (logo o muestra)
-image_path = "logo.png"
+# Imagen principal 
+image_path = "llave.png"
 image = Image.open(image_path)
-image = image.resize((350, 170), Image.Resampling.LANCZOS)
+image = image.resize((300, 170), Image.Resampling.LANCZOS)
 photo = ImageTk.PhotoImage(image)
 
 # Elementos de la pantalla principal
