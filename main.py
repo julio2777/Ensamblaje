@@ -3,40 +3,40 @@ from tkinter import *           # Librería base para la interfaz gráfica
 from tkinter import messagebox, ttk  # Messagebox para advertencias y ttk para barra de progreso
 from PIL import Image, ImageTk   # Librerías para manejo de imágenes
 import customtkinter             # Librería para botones personalizados (más bonitos)
+import serial
+import time
+import mysql.connector
+import threading
 
-# --------------------------------------------------------------------
-# Definición de datos iniciales para los pasos de ensamblaje
-# --------------------------------------------------------------------
+puerto_serie = None  # Se inicializará al conectar
+paso_actual_serial = 0
 
-# Lista de textos que describen cada paso del proceso
-titulos_pasos = [
-    "Agarre la pieza 1000 (tuerca).",
-    "Agarre la pieza 1001 (niple).",
-    "Ensamble la pieza 1000 con la pieza 1001.",
-    "Agarre la pieza 1002 (cuerpo en forma de T).",
-    "Ensamble el conjunto con la pieza 1002.",
-    "Agarre la pieza 1003 (perilla giratoria).",
-    "Ensamble todo el conjunto final."
-]
+def cargar_pasos_desde_mysql():
+    conexion = mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="",  
+        database="ensamblaje_db"
+    )
+    cursor = conexion.cursor()
+    cursor.execute("SELECT texto, imagenes FROM pasos ORDER BY id ASC")
+    datos = cursor.fetchall()
+    conexion.close()
 
-# Lista de imágenes correspondientes a cada paso
-imagenes_pasos = [
-    ["pieza_1000.png"],
-    ["pieza_1001.png"],
-    ["pieza_1000.png", "pieza_1001.png"],
-    ["pieza_1002.png"],
-    ["ensamblaje_1000_1001.png", "pieza_1002.png"],
-    ["pieza_1003.png"],
-    ["ensamblaje_1000_1001_1002.png", "pieza_1003.png"]
-]
+    titulos = []
+    imagenes = []
+    for texto, imgs in datos:
+        titulos.append(texto)
+        imagenes.append(imgs.split(","))
+    return titulos, imagenes
+
+
+titulos_pasos, imagenes_pasos = cargar_pasos_desde_mysql()
+boton_por_paso = [0, 1, 4, 2, 4, 3, 4]
 
 # Variables globales de control
 estado_conexion = False              # Indica si el sistema está conectado
 ventana_ensamblaje_abierta = False    # Evita abrir más de una ventana de ensamblaje al mismo tiempo
-
-# --------------------------------------------------------------------
-# Funciones principales del sistema
-# --------------------------------------------------------------------
 
 # Actualiza el estado de conexión en la pantalla principal
 def actualizar_estado():
@@ -47,15 +47,58 @@ def actualizar_estado():
 
 # Función para establecer conexión
 def conectar():
-    global estado_conexion
-    estado_conexion = True
-    actualizar_estado()
+    global estado_conexion, puerto_serie
+    try:
+        print("[INFO] Intentando conectar al ESP32...")
+        puerto_serie = serial.Serial('COM8', 115200, timeout=1)  
+        time.sleep(1) 
+        estado_conexion = True
+        actualizar_estado()
+        print("[OK] Conexión establecida.")
+    except Exception as e:
+        print("[ERROR] No se pudo abrir el puerto serial:", e)
+        messagebox.showerror("Error", f"No se pudo abrir el puerto serial:\n{e}")
+
+
 
 # Función para desconectar
 def desconectar():
     global estado_conexion
     estado_conexion = False
     actualizar_estado()
+
+
+def leer_serial_continuamente(cambiar_paso_func, finalizar_func, ventana_ref):
+    def loop():
+        global paso_actual_serial
+        while estado_conexion:
+            try:
+                if puerto_serie and puerto_serie.in_waiting:
+                    dato = puerto_serie.readline().decode().strip()
+                    print(f"[SERIAL] Dato recibido: '{dato}'")
+                    if dato.isdigit():
+                        presionado = int(dato)
+                        print(f"[INFO] Comparando botón {presionado} con paso esperado {paso_actual_serial}")
+                        esperado = boton_por_paso[paso_actual_serial]
+                        if presionado == esperado:
+                            print("[OK] Paso correcto")
+                            if paso_actual_serial == len(boton_por_paso) - 1:
+                                print("[FINAL] Ensamblaje terminado desde botón")
+                                if puerto_serie:
+                                    puerto_serie.write(b"OFF\n")
+                                    print("[SERIAL] Instrucción enviada: apagar todos los LEDs")
+                                finalizar_func(ventana_ref) 
+                            else:
+                                cambiar_paso_func(1)
+
+                        else:
+                            print("[ADVERTENCIA] Paso incorrecto")
+                            messagebox.showwarning("¡Error!", f"Botón incorrecto: esperábamos {esperado}, presionaste {presionado}")
+            except Exception as e:
+                print(f"[ERROR] Al leer serial: {e}")
+            time.sleep(0.2)
+    threading.Thread(target=loop, daemon=True).start()
+
 
 # Función principal que abre la ventana del proceso de ensamblaje
 def abrir_ventana_ensamblaje():
@@ -158,7 +201,6 @@ def abrir_ventana_ensamblaje():
     boton_finalizar.grid(row=0, column=2, padx=20)
     boton_finalizar.grid_remove()  # Ocultar inicialmente
 
-    # --- Subfunciones internas de la ventana de ensamblaje ---
 
     # Cierra la ventana de ensamblaje
     def cerrar_ventana(ventana):
@@ -166,12 +208,25 @@ def abrir_ventana_ensamblaje():
         ventana.destroy()
         ventana_ensamblaje_abierta = False
 
-    # Cambia el paso actual (hacia adelante o hacia atrás)
+    # Cambia el paso actual
     def cambiar_paso(direccion):
+        global paso_actual_serial
         nuevo_paso = paso_actual.get() + direccion
         if 0 <= nuevo_paso < len(titulos_pasos):
+            print(f"[INFO] Cambiando al paso {nuevo_paso}")
             paso_actual.set(nuevo_paso)
+            paso_actual_serial = nuevo_paso
             actualizar_pantalla()
+            try:
+                if puerto_serie:
+                    esperado = boton_por_paso[nuevo_paso]
+                    puerto_serie.write(f"{esperado}\n".encode())
+                    print(f"[SERIAL] Indicando al ESP32 que encienda LED del botón {esperado}")
+            except Exception as e:
+                print(f"[ERROR] No se pudo enviar paso al ESP32: {e}")
+
+
+
 
     # Muestra un pequeño modal indicando que el ensamblaje fue finalizado
     def finalizar_ensamblaje(ventana):
@@ -196,7 +251,7 @@ def abrir_ventana_ensamblaje():
         # Después de 2 segundos, cierra todo
         ventana.after(2000, lambda: [modal.destroy(), cerrar_ventana(ventana)])
 
-    # Actualiza la información visual de la ventana (paso, imágenes, progreso)
+    # Actualiza la información visual de la ventana
     def actualizar_pantalla():
         actual = paso_actual.get()
         paso_label.config(text=f"Paso {actual+1}:")
@@ -207,26 +262,26 @@ def abrir_ventana_ensamblaje():
             widget.destroy()
 
         # Mostrar imagen o imágenes correspondientes al paso actual
-        image_path = "labomba.jpg"  # Imagen genérica para prueba
+        #image_path = "labomba.jpg"  
         imagenes = imagenes_pasos[actual]
         if len(imagenes) == 1:
             frame_sombra = Frame(frame_imagenes, bg="#e0e0e0", padx=3, pady=3)
             frame_sombra.pack()
-            img1 = Image.open(image_path)
+            img1 = Image.open(imagenes[0])
             img1 = img1.resize((350, 250), Image.Resampling.LANCZOS)
             img1 = ImageTk.PhotoImage(img1)
             label_imagen1 = Label(frame_sombra, image=img1, bg="white")
             label_imagen1.image = img1
             label_imagen1.pack()
         else:
-            img1 = Image.open(image_path)
+            img1 = Image.open(imagenes[0])
             img1 = img1.resize((300, 220), Image.Resampling.LANCZOS)
             img1 = ImageTk.PhotoImage(img1)
             label_imagen1 = Label(frame_imagenes, image=img1, bg="white")
             label_imagen1.image = img1
             label_imagen1.grid(row=0, column=0, padx=10)
 
-            img2 = Image.open(image_path)
+            img2 = Image.open(imagenes[1])
             img2 = img2.resize((300, 220), Image.Resampling.LANCZOS)
             img2 = ImageTk.PhotoImage(img2)
             label_imagen2 = Label(frame_imagenes, image=img2, bg="white")
@@ -252,19 +307,30 @@ def abrir_ventana_ensamblaje():
     # Inicializa la pantalla
     actualizar_pantalla()
 
-# --------------------------------------------------------------------
+    # Enviar el LED del primer paso al ESP32
+    esperado = boton_por_paso[paso_actual.get()]
+    if puerto_serie and esperado is not None:
+        puerto_serie.write(f"{esperado}\n".encode())
+        print(f"[INICIO] LED del paso 1 enviado: botón {esperado}")
+
+
+    global paso_actual_serial
+    paso_actual_serial = 0
+
+    leer_serial_continuamente(cambiar_paso, finalizar_ensamblaje, nueva_ventana)
+
+
 # Definición de la Ventana Principal
-# --------------------------------------------------------------------
 
 window = Tk()
 window.title("Ensamblaje Coflex")
 window.geometry("850x450")
 window.configure(bg="#ffffff")
 
-# Imagen principal (logo o muestra)
-image_path = "labomba.jpg"
+# Imagen principal 
+image_path = "llave.png"
 image = Image.open(image_path)
-image = image.resize((350, 170), Image.Resampling.LANCZOS)
+image = image.resize((300, 170), Image.Resampling.LANCZOS)
 photo = ImageTk.PhotoImage(image)
 
 # Elementos de la pantalla principal

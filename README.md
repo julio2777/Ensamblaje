@@ -54,9 +54,4 @@ python main.py
 - No necesita conexión a bases de datos ni servidores externos.
 - Proyecto ideal para prácticas de IoT, PLC o Automatización en líneas de producción.
 
-## 📧 Contacto
 
-Desarrollado para prácticas académicas o demostrativas de líneas de ensamblaje.  
-Para cualquier duda o mejora puedes contactar al desarrollador del proyecto.
-
-# 🎯 ¡Listo para ensamblar de manera profesional!
