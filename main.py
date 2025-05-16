@@ -50,7 +50,7 @@ def conectar():
     global estado_conexion, puerto_serie
     try:
         print("[INFO] Intentando conectar al ESP32...")
-        puerto_serie = serial.Serial('COM8', 115200, timeout=1)  
+        #puerto_serie = serial.Serial('COM8', 115200, timeout=1)  
         time.sleep(1) 
         estado_conexion = True
         actualizar_estado()
