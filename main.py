@@ -4,13 +4,15 @@ from tkinter import messagebox, ttk  # Messagebox para advertencias y ttk para b
 from PIL import Image, ImageTk   # Librerías para manejo de imágenes
 import customtkinter             # Librería para botones personalizados (más bonitos)
 import serial
+from pyModbusTCP.client import ModbusClient
+
 import time
 import mysql.connector
 import threading
 
-puerto_serie = None  # Se inicializará al conectar
+cliente_modbus = None  # Se inicializará al conectar
 paso_actual_serial = 0
-
+puerto_serie = None  # Se inicializará al conectar
 def cargar_pasos_desde_mysql():
     conexion = mysql.connector.connect(
         host="localhost",
@@ -45,58 +47,67 @@ def actualizar_estado():
     else:
         Label_id17.configure(text="Estado: Desconectado", text_color="#f40b0b")
 
-# Función para establecer conexión
+# Función para establecer conexión con el PLC por Modbus TCP
 def conectar():
-    global estado_conexion, puerto_serie
+    global estado_conexion, cliente_modbus
     try:
-        print("[INFO] Intentando conectar al ESP32...")
-        puerto_serie = serial.Serial('COM8', 115200, timeout=1)  
-        time.sleep(1) 
-        estado_conexion = True
-        actualizar_estado()
-        print("[OK] Conexión establecida.")
+        print("[INFO] Intentando conectar al PLC...")
+        cliente_modbus = ModbusClient(host='10.41.110.255', port=502, unit_id=1)
+        cliente_modbus.open()
+        # Intentar leer algo para confirmar la conexión
+        test_lectura = cliente_modbus.read_input_registers(0, 1)
+        if test_lectura:
+            estado_conexion = True
+            actualizar_estado()
+            print("[OK] Conexión establecida con el PLC.")
+            print(test_lectura)
+        else:
+            raise ConnectionError("No se pudo leer del PLC. ¿Está el simulador activo?")
     except Exception as e:
-        print("[ERROR] No se pudo abrir el puerto serial:", e)
-        messagebox.showerror("Error", f"No se pudo abrir el puerto serial:\n{e}")
-
+        print("[ERROR] No se pudo conectar al PLC:", e)
+        messagebox.showerror("Error", f"No se pudo conectar al PLC:\n{e}")
 
 
 # Función para desconectar
 def desconectar():
     global estado_conexion
+    if cliente_modbus:
+        cliente_modbus.close()
     estado_conexion = False
     actualizar_estado()
 
 
-def leer_serial_continuamente(cambiar_paso_func, finalizar_func, ventana_ref):
+def leer_modbus_continuamente(cambiar_paso_func, finalizar_func, ventana_ref):
     def loop():
-        global paso_actual_serial
+        global paso_actual_serial, cliente_modbus
         while estado_conexion:
             try:
-                if puerto_serie and puerto_serie.in_waiting:
-                    dato = puerto_serie.readline().decode().strip()
-                    print(f"[SERIAL] Dato recibido: '{dato}'")
-                    if dato.isdigit():
-                        presionado = int(dato)
-                        print(f"[INFO] Comparando botón {presionado} con paso esperado {paso_actual_serial}")
-                        esperado = boton_por_paso[paso_actual_serial]
-                        if presionado == esperado:
-                            print("[OK] Paso correcto")
-                            if paso_actual_serial == len(boton_por_paso) - 1:
-                                print("[FINAL] Ensamblaje terminado desde botón")
-                                if puerto_serie:
-                                    puerto_serie.write(b"OFF\n")
-                                    print("[SERIAL] Instrucción enviada: apagar todos los LEDs")
-                                finalizar_func(ventana_ref) 
-                            else:
-                                cambiar_paso_func(1)
+                # Leer un registro donde el PLC indica qué botón se presionó
+                registros = cliente_modbus.read_input_registers(0, 1)  # Dirección 0, cantidad 1
+                if registros:
+                    presionado = registros[0]
+                    print(f"[MODBUS] Botón leído: {presionado}")
 
+                    esperado = boton_por_paso[paso_actual_serial]
+                    print(f"[INFO] Comparando botón {presionado} con paso esperado {esperado}")
+                    if presionado == esperado:
+                        print("[OK] Paso correcto")
+                        if paso_actual_serial == len(boton_por_paso) - 1:
+                            print("[FINAL] Ensamblaje terminado")
+                            # Apagar LEDs o notificar fin (escribe un valor al PLC si es necesario)
+                            cliente_modbus.write_single_register(1, 0)  # Ejemplo: escribir 0 para apagar LEDs
+                            finalizar_func(ventana_ref)
                         else:
-                            print("[ADVERTENCIA] Paso incorrecto")
-                            messagebox.showwarning("¡Error!", f"Botón incorrecto: esperábamos {esperado}, presionaste {presionado}")
+                            cambiar_paso_func(1)
+                    else:
+                        print("[ADVERTENCIA] Paso incorrecto")
+                        messagebox.showwarning("¡Error!", f"Botón incorrecto: esperábamos {esperado}, presionaste {presionado}")
+                else:
+                    print("[WARN] No se pudo leer del PLC")
+
             except Exception as e:
-                print(f"[ERROR] Al leer serial: {e}")
-            time.sleep(0.2)
+                print(f"[ERROR] Al leer desde Modbus: {e}")
+            time.sleep(0.5)
     threading.Thread(target=loop, daemon=True).start()
 
 
@@ -121,6 +132,7 @@ def abrir_ventana_ensamblaje():
     nueva_ventana.protocol("WM_DELETE_WINDOW", lambda: cerrar_ventana(nueva_ventana))
 
     # Variable para controlar el paso actual
+    global paso_actual
     paso_actual = IntVar(value=0)
 
     # Título
@@ -217,13 +229,15 @@ def abrir_ventana_ensamblaje():
             paso_actual.set(nuevo_paso)
             paso_actual_serial = nuevo_paso
             actualizar_pantalla()
-            try:
-                if puerto_serie:
-                    esperado = boton_por_paso[nuevo_paso]
-                    puerto_serie.write(f"{esperado}\n".encode())
-                    print(f"[SERIAL] Indicando al ESP32 que encienda LED del botón {esperado}")
-            except Exception as e:
-                print(f"[ERROR] No se pudo enviar paso al ESP32: {e}")
+
+        try:
+            if cliente_modbus:
+                esperado = boton_por_paso[nuevo_paso]
+                # Enviamos el valor del paso al PLC (por ejemplo, para encender el LED correspondiente)
+                cliente_modbus.write_multiple_registers(0, [esperado, 0])  # Solo un valor, el otro puede ser relleno
+                print(f"[MODBUS] Enviando al PLC que encienda LED del botón {esperado}")
+        except Exception as e:
+            print(f"[ERROR] No se pudo enviar paso al PLC: {e}")
 
 
 
@@ -317,7 +331,8 @@ def abrir_ventana_ensamblaje():
     global paso_actual_serial
     paso_actual_serial = 0
 
-    leer_serial_continuamente(cambiar_paso, finalizar_ensamblaje, nueva_ventana)
+    #leer_serial_continuamente(cambiar_paso, finalizar_ensamblaje, nueva_ventana)
+    leer_modbus_continuamente(cambiar_paso, finalizar_ensamblaje, nueva_ventana)
 
 
 # Definición de la Ventana Principal
