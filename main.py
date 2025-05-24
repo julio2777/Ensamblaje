@@ -82,32 +82,46 @@ def leer_modbus_continuamente(cambiar_paso_func, finalizar_func, ventana_ref):
         global paso_actual_serial, cliente_modbus
         while estado_conexion:
             try:
-                # Leer un registro donde el PLC indica qué botón se presionó
-                registros = cliente_modbus.read_input_registers(0, 1)  # Dirección 0, cantidad 1
-                if registros:
-                    presionado = registros[0]
-                    print(f"[MODBUS] Botón leído: {presionado}")
+                registros = cliente_modbus.read_input_registers(0, 4)  # Leer los 4 registros
 
-                    esperado = boton_por_paso[paso_actual_serial]
-                    print(f"[INFO] Comparando botón {presionado} con paso esperado {esperado}")
-                    if presionado == esperado:
-                        print("[OK] Paso correcto")
-                        if paso_actual_serial == len(boton_por_paso) - 1:
-                            print("[FINAL] Ensamblaje terminado")
-                            # Apagar LEDs o notificar fin (escribe un valor al PLC si es necesario)
-                            cliente_modbus.write_single_register(1, 0)  # Ejemplo: escribir 0 para apagar LEDs
-                            finalizar_func(ventana_ref)
+                if registros:
+                    print(f"[MODBUS] Registros leídos: {registros}")
+                    
+                    # Buscar qué registro tiene un valor distinto de 0
+                    indices_activos = [i for i, val in enumerate(registros) if val > 0]
+
+                    if len(indices_activos) == 1:
+                        presionado = indices_activos[0]  # Solo uno activo
+                        esperado = boton_por_paso[paso_actual_serial]
+
+                        print(f"[INFO] Botón presionado: {presionado}, esperado: {esperado}")
+
+                        if presionado == esperado:
+                            print("[OK] Paso correcto")
+                            if paso_actual_serial == len(boton_por_paso) - 1:
+                                print("[FINAL] Ensamblaje terminado")
+                                cliente_modbus.write_single_register(1, 0)  # Apagar LEDs
+                                finalizar_func(ventana_ref)
+                            else:
+                                cambiar_paso_func(1)
                         else:
-                            cambiar_paso_func(1)
+                            print("[ERROR] Botón incorrecto")
+                            messagebox.showwarning("¡Error!", f"Esperábamos el botón {esperado}, pero se activó {presionado}")
+
+                    elif len(indices_activos) == 0:
+                        pass  # Ningún botón presionado, no hacer nada
                     else:
-                        print("[ADVERTENCIA] Paso incorrecto")
-                        messagebox.showwarning("¡Error!", f"Botón incorrecto: esperábamos {esperado}, presionaste {presionado}")
+                        print("[ERROR] Se activaron múltiples botones:", indices_activos)
+                        messagebox.showwarning("¡Error!", f"Se detectaron múltiples botones activos: {indices_activos}")
+
                 else:
                     print("[WARN] No se pudo leer del PLC")
 
             except Exception as e:
                 print(f"[ERROR] Al leer desde Modbus: {e}")
+
             time.sleep(0.5)
+
     threading.Thread(target=loop, daemon=True).start()
 
 
