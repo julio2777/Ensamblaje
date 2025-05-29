@@ -34,7 +34,7 @@ def cargar_pasos_desde_mysql():
 
 
 titulos_pasos, imagenes_pasos = cargar_pasos_desde_mysql()
-boton_por_paso = [0, 1, 4, 2, 4, 3, 4]
+boton_por_paso = [2, 3, 4, 5, 4,6, 4]
 
 # Variables globales de control
 estado_conexion = False              # Indica si el sistema está conectado
@@ -52,7 +52,7 @@ def conectar():
     global estado_conexion, cliente_modbus
     try:
         print("[INFO] Intentando conectar al PLC...")
-        cliente_modbus = ModbusClient(host='10.41.110.255', port=502, unit_id=1)
+        cliente_modbus = ModbusClient(host='192.168.1.114', port=502, unit_id=1)
         cliente_modbus.open()
         # Intentar leer algo para confirmar la conexión
         test_lectura = cliente_modbus.read_input_registers(0, 1)
@@ -80,45 +80,50 @@ def desconectar():
 def leer_modbus_continuamente(cambiar_paso_func, finalizar_func, ventana_ref):
     def loop():
         global paso_actual_serial, cliente_modbus
+
+        total_pasos = len(boton_por_paso)
+        estado_ensamblaje = 1  # En proceso
+
         while estado_conexion:
             try:
-                registros = cliente_modbus.read_input_registers(0, 4)  # Leer los 4 registros
+                idx = paso_actual_serial
+                esperado = boton_por_paso[idx]
 
+                # Arreglo de salida: cada paso en su lugar, los demás en 0
+                valores_envio = [boton_por_paso[i] if i == idx else 0 for i in range(total_pasos)]
+                valores_envio.append(estado_ensamblaje)  # Registro 7 = estado del ensamblaje
+
+                # Escribir en los holding registers [0-7]
+                cliente_modbus.write_multiple_registers(0, valores_envio)
+                print(f"[MODBUS] Enviado a holding_registers: {valores_envio}")
+
+                # Leer input_registers [0-6]
+                registros = cliente_modbus.read_input_registers(0, total_pasos)
                 if registros:
-                    print(f"[MODBUS] Registros leídos: {registros}")
-                    
-                    # Buscar qué registro tiene un valor distinto de 0
-                    indices_activos = [i for i, val in enumerate(registros) if val > 0]
+                    recibido = registros[idx]
+                    print(f"[MODBUS] Leído input_register[{idx}]: {recibido}, esperado: {esperado}")
 
-                    if len(indices_activos) == 1:
-                        presionado = indices_activos[0]  # Solo uno activo
-                        esperado = boton_por_paso[paso_actual_serial]
+                    if recibido == esperado:
+                        print("[OK] Confirmación correcta del sensor")
 
-                        print(f"[INFO] Botón presionado: {presionado}, esperado: {esperado}")
-
-                        if presionado == esperado:
-                            print("[OK] Paso correcto")
-                            if paso_actual_serial == len(boton_por_paso) - 1:
-                                print("[FINAL] Ensamblaje terminado")
-                                cliente_modbus.write_single_register(1, 0)  # Apagar LEDs
-                                finalizar_func(ventana_ref)
-                            else:
-                                cambiar_paso_func(1)
+                        if idx == total_pasos - 1:
+                            print("[FINAL] Ensamblaje terminado")
+                            estado_ensamblaje = 2  # Finalizado
+                            cliente_modbus.write_multiple_registers(0, [0]*total_pasos + [estado_ensamblaje])
+                            finalizar_func(ventana_ref)
+                            return
                         else:
-                            print("[ERROR] Botón incorrecto")
-                            messagebox.showwarning("¡Error!", f"Esperábamos el botón {esperado}, pero se activó {presionado}")
+                            cambiar_paso_func(1)
 
-                    elif len(indices_activos) == 0:
-                        pass  # Ningún botón presionado, no hacer nada
-                    else:
-                        print("[ERROR] Se activaron múltiples botones:", indices_activos)
-                        messagebox.showwarning("¡Error!", f"Se detectaron múltiples botones activos: {indices_activos}")
+                    elif recibido != 0:
+                        print(f"[ERROR] Valor incorrecto en input_register[{idx}]: {recibido}")
+                        messagebox.showwarning("¡Error!", f"Se esperaba {esperado}, pero se recibió {recibido}")
 
                 else:
-                    print("[WARN] No se pudo leer del PLC")
+                    print("[WARN] No se pudieron leer los input registers")
 
             except Exception as e:
-                print(f"[ERROR] Al leer desde Modbus: {e}")
+                print(f"[ERROR] Al comunicar con el PLC: {e}")
 
             time.sleep(0.5)
 
